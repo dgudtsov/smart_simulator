@@ -11,6 +11,10 @@ use constant
     AVP_External_Identifier => "External-Identifier",
     AVP_User_Identifier => "User-Identifier",
     AVP_Result_Code => "Result-Code",
+    AVP_NIDD_Authorization_Response => "NIDD-Authorization-Response",
+    AVP_MSISDN => "MSISDN",
+    AVP_User_Name => "User-Name",
+
    
     # diameter vendor ids
     TGPP_VENDOR_ID => 10415,
@@ -20,7 +24,10 @@ use constant
     # external id field name
     CFG_ext_id => "ExternalId",
     # imsi field name
-    CFG_imsi => "IMSI"
+    CFG_imsi => "IMSI",
+    # msisdn field name
+    CFG_msisdn => "MSISDN"
+
 
 
 };
@@ -41,40 +48,19 @@ sub debug
 
 sub cfg_extid_lookup
 {
+	# external lookup in the CFG_table
+	# by key in column CFG_ext_id
+	# returned value from CFG_imsi column
 	my $ext_id = shift;
 	debug "Entered lookup for ext id: $ext_id";
 	debug "size of config: $#{$dca::appConfig{(CFG_table)}}";
 	
 	for my $i (0 .. $#{$dca::appConfig{(CFG_table)}} ) {
 		debug "processing step $i for extid: $dca::appConfig{(CFG_table)}[$i]{(CFG_ext_id)}";
-		debug "having imsi: $dca::appConfig{(CFG_table)}[$i]{(CFG_imsi)}";
-		return $dca::appConfig{(CFG_table)}[$i]{(CFG_imsi)} if ( $ext_id =~ /$dca::appConfig{(CFG_table)}[$i]{(CFG_ext_id)}/)
+		debug "having imsi: $dca::appConfig{(CFG_table)}[$i]{(CFG_imsi)} msisdn: $dca::appConfig{(CFG_table)}[$i]{(CFG_msisdn)}";
+		return ($dca::appConfig{(CFG_table)}[$i]{(CFG_imsi)},$dca::appConfig{(CFG_table)}[$i]{(CFG_msisdn)}) if ( $ext_id =~ /$dca::appConfig{(CFG_table)}[$i]{(CFG_ext_id)}/)
 	}
 }
-
-sub get_AVP_from_MSG
-{
-    my $msg = shift;
-    my $key = shift;
-    my $value = undef;
-
-    # try to get the value from the avp
-    if (!diameter::Message::avpExists($msg, $key)) 
-    {
-        debug "AVP $key does not exist in the diameter message";
-    } else {
-
-	    # AVP is in the message, we can use it
-	    $value = diameter::Message::getAvpValue($msg, $key);
-	    if(!defined($value))
-	    {
-		# could not get value from the request
-		debug "Value of AVP $key value cannot not be read from diameter message";
-	    }
-    }
-# return undef by default
-  return $value;
- }
 
 sub get_AVP_from_MSG_universal
 {
@@ -116,28 +102,25 @@ sub get_AVP_from_MSG_universal
   return $value;
  }
 
-sub get_GAVP_from_MSG
+
+sub get_AVP_from_Grouped
 {
+    my $gavp = shift;
+    my $key = shift;
+    my $value = undef;
 
-    my $msg = shift;
-    my $avp_name = shift;
-    my $gAvp = undef;
+	debug "Entered into get_AVP_from_MSG_universal() with key $key";
 
-    # try to get the value from the avp
-    if (!diameter::Message::avpExists($msg, $avp_name)) 
-    {
-        debug "AVP $avp_name does not exist in the diameter message";
-#        return undef;
-    } else {
+	my $value = diameter::GroupedAvp::getAvpValue($gavp,$key);
 
-	    # AVP is in the message, we can use it
-    	debug "GAVP is in the message, we can use it: $avp_name";
-	$gAvp = diameter::Message::getGroupedAvp($msg, $avp_name);
-    	debug "GAVP result: $gAvp";
-    }
+	if(!defined($value))
+	{
+	    debug "key $key is not present in GAVP";
+	} else {
+		debug "AVP $key value: $value";
+	}	
 
- return $gAvp
-
+  return $value;
 }
 
 sub get_msg_cmd {
@@ -175,17 +158,29 @@ sub get_msg_app_id {
 }
 
 sub send_answer {
+
+	my %subs = %{shift()};
+
      	debug "started send_answer()";
+
+	debug "subs: ".values %subs;
 
         my $ans = new dca::application::answer(2001,"DIAMETER_SUCCESS", TGPP_VENDOR_ID);
 
-	my $err = diameter::Message::addAvpValue($ans, "User-name", "000000080032681");
+	my $avp_response = diameter::Message::addGroupedAvp($ans,AVP_NIDD_Authorization_Response);
+
+
+	diameter::GroupedAvp::addAvpValue($avp_response, AVP_User_Name, "000000000000681");
+	diameter::GroupedAvp::addAvpValue($avp_response, AVP_MSISDN, "000000000681");
+	diameter::GroupedAvp::addAvpValue($avp_response, AVP_External_Identifier, "000000000681");
+
+	debug "GAVP: $avp_response";
 
      	debug "Answer: $ans";
 
-    	if(!defined($err)){
-     		debug "Error adding AVP value: $err";
-	}
+#    	if(!defined($err)){
+#     		debug "Error adding AVP value: $err";
+#	}
 
         dca::action::answer($ans);
 
@@ -199,7 +194,6 @@ sub exit_app()
 
 sub process_request()
 {
-
     # diameter message is the first parameter
     my $param = shift;
 	
@@ -228,20 +222,21 @@ sub process_request()
 
 		# get the externalID from grouped User-Identifier
 
-# TODO: make as sub
-		my $ext_id = diameter::GroupedAvp::getAvpValue($user_id,AVP_External_Identifier);
+		my $ext_id=get_AVP_from_Grouped	($user_id, AVP_External_Identifier);
 
-		if(!defined($ext_id))
-		{
-		    die "External ID is not present in message";
-		}
      		debug "ExternalID: $ext_id";
 
-		my $imsi = cfg_extid_lookup($ext_id);
+		my ($imsi,$msisdn) = cfg_extid_lookup($ext_id);
 
-		debug "IMSI matched: $imsi";
+		debug "Matched IMSI: $imsi MSISDN: $msisdn";
 
-		send_answer();
+		my %subscriber = (
+		'msisdn'=>$msisdn,
+		'imsi' => $imsi,
+		'ext_id' => $ext_id
+		);
+
+		send_answer(\%subscriber);
 	} else {
 		debug "Userid is not parsed properly";
 	}
@@ -250,6 +245,7 @@ sub process_request()
     } else {
     	debug "got message with CMD code: $cmd";
     }
+# default action
     dca::action::forward();
 }
 
