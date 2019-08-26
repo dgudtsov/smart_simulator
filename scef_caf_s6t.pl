@@ -37,6 +37,8 @@ my $DEBUG_ON = 1;
 
 use strict;
 
+#use Data::Dumper;
+
 sub debug
 {
     my $msg = shift;
@@ -175,8 +177,12 @@ sub send_answer {
 	diameter::GroupedAvp::addAvpValue($avp_response, AVP_External_Identifier, "000000000681");
 
 	debug "GAVP: $avp_response";
+	
+#	debug Dumper($avp_response);
 
      	debug "Answer: $ans";
+
+#	debug Dumper($ans);
 
 #    	if(!defined($err)){
 #     		debug "Error adding AVP value: $err";
